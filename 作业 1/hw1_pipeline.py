@@ -70,7 +70,7 @@ def _entry_body_text(entry) -> str:
     return _strip_html(raw)
 
 
-def fetch_rss_bytes(url: str, timeout: int = 60) -> bytes:
+def fetch_rss_bytes(url: str, timeout: int = 20) -> bytes:
     """使用 urllib 拉取 RSS（符合课程对 urllib 的引用场景）。"""
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     ctx = ssl.create_default_context(cafile=certifi.where())
@@ -89,6 +89,7 @@ def collect_feeds(
 
     rows: list[dict] = []
     for feed in FEEDS:
+        print(f"[info] 正在抓取: {feed['name']} -> {feed['url']}")
         try:
             content = fetch_rss_bytes(feed["url"])
         except (urllib.error.URLError, OSError) as e:
@@ -96,6 +97,7 @@ def collect_feeds(
             continue
         parsed = feedparser.parse(content)
         entries = (getattr(parsed, "entries", []) or [])[:MAX_ITEMS_PER_FEED]
+        print(f"[info] 抓取完成: {feed['name']}，获得 {len(entries)} 条")
         for entry in entries:
             title = _strip_html(getattr(entry, "title", "") or "")
             summary = _entry_body_text(entry)
@@ -170,6 +172,10 @@ def _pick_chinese_font_path() -> str | None:
     from matplotlib import font_manager
 
     candidates = [
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/msyhbd.ttc",
+        "C:/Windows/Fonts/simhei.ttf",
+        "C:/Windows/Fonts/simsun.ttc",
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/STHeiti Light.ttc",
         "/System/Library/Fonts/Hiragino Sans GB.ttc",
@@ -180,7 +186,20 @@ def _pick_chinese_font_path() -> str | None:
             return p
     for f in font_manager.fontManager.ttflist:
         name = getattr(f, "name", "") or ""
-        if any(x in name for x in ("PingFang", "Heiti", "Songti", "Hiragino")):
+        if any(
+            x in name
+            for x in (
+                "Microsoft YaHei",
+                "SimHei",
+                "SimSun",
+                "FangSong",
+                "KaiTi",
+                "PingFang",
+                "Heiti",
+                "Songti",
+                "Hiragino",
+            )
+        ):
             return f.fname
     return None
 
@@ -271,5 +290,7 @@ def run_visualization(
 
 
 if __name__ == "__main__":
+    print("[info] 开始执行 RSS 采集与可视化流水线...")
     collect_feeds()
     run_visualization()
+    print("[info] 全部完成。")
