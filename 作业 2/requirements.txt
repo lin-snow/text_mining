@@ -1,0 +1,9 @@
+jieba>=0.42.1
+gensim>=4.3.0
+annoy>=1.17.3
+numpy>=1.26
+pandas>=2.0
+matplotlib>=3.7
+wordcloud>=1.9
+jupyter>=1.0
+notebook>=7.0
