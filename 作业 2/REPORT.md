@@ -67,20 +67,26 @@
 
 整体流水线如下图所示，对应课程教材给出的 8 步通用框架。
 
+```mermaid
+flowchart TD
+    seed["种子词典 v0 (108 词)"] --> dict0[("当前词典 dict_v(k-1)")]
+    corpus[("RSS 语料\n221 篇")] --> seg
+
+    subgraph iter["第 k 轮迭代"]
+        direction TB
+        dict0 --> seg["② jieba 分词 → sentences_k"]
+        seg --> w2v["③ Word2Vec 训练\n(skip-gram, 80d)"]
+        w2v --> knn["④ Annoy / numpy 余弦 KNN 索引"]
+        knn --> search["⑤ 对每个种子词检索 Top-K 近邻"]
+        search --> score["⑥ 过滤 → 打分 → 取 Top-N 候选"]
+        score --> update["⑦ 写入 dict_v(k)"]
+    end
+
+    update -->|迭代回灌| dict0
+    update -->|重复 3 轮| final["custom_dict_final.txt (188 词)"]
 ```
-[seed_dict v0 (108)]              ┌── 第 k 轮 ──────────────────────────────┐
-        │                         │                                        │
-        ▼                         │   ① 用当前词典 dict_v(k-1) 加载 jieba    │
-  ┌──────────┐                    │   ② 全语料分词 → sentences_k            │
-  │  RSS 语料  │ ─────────────▶   │   ③ gensim Word2Vec(skip-gram,80d) 训练 │
-  │   221 篇   │                  │   ④ Annoy / numpy 余弦 KNN 索引建好      │
-  └──────────┘                    │   ⑤ 对每个种子词检索 Top-K 近邻         │
-        ▲                         │   ⑥ 过滤 → 打分 → 取 Top-N 候选         │
-        │                         │   ⑦ 写入 dict_v(k)                     │
-        └──── 迭代回灌 ◀──────────┘                                        │
-                                                                         ◀─┘
-                       重复 3 轮 ⇒ custom_dict_final.txt (188 词)
-```
+
+> 注：① 初始化词典对应种子词典节点；②~⑦ 为单轮迭代内的步骤；⑧ 案例分析见第四章。
 
 ### 3.1 分词
 
