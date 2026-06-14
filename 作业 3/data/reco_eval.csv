@@ -1,0 +1,2 @@
+﻿hit_random,hit_lsi,hit_lda,overlap_lsi_tfidf,overlap_lda_tfidf,ann_recall,brute_ms,ann_ms,n_docs,k_star
+0.1184,0.2864,0.9682,0.8073,0.1218,0.995,1.315,1.066,220,80

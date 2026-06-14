@@ -1,0 +1,13 @@
+# 作业 3：基于降维与近似最近邻的中文科技资讯推荐系统
+# 复用作业 2 的虚拟环境（已含 gensim/jieba/numpy/scipy/pandas/matplotlib/wordcloud/annoy），
+# 本作业额外需要 scikit-learn（t-SNE/PCA/指标）与 umap-learn（UMAP 降维可视化）。
+gensim>=4.3        # LSI/LSA(SVD 截断) 与 LDA 主题模型、TF-IDF
+jieba>=0.42        # 中文分词（加载作业 2 定制词典）
+numpy
+scipy
+pandas
+matplotlib         # 全部图表离线绘制
+wordcloud
+scikit-learn>=1.3  # PCA / t-SNE / 评估指标
+umap-learn>=0.5    # UMAP 流形降维可视化
+annoy>=1.17        # Approximate Nearest Neighbors —— 推荐召回
