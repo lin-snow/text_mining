@@ -5,3 +5,6 @@ scipy
 pandas
 matplotlib
 wordcloud
+# 第六章 AIGC 默认离线读取 data/newword_llm.json 缓存，无需联网；
+# 仅当用 llm_annotate.py --regenerate 在线重新标注时才需要：
+# anthropic>=0.40

@@ -50,6 +50,7 @@ EQUATIONS = [
     r"$p(\mathbf{W},\mathbf{Z},\theta,\varphi\,|\,\alpha,\beta)=\prod_{k=1}^{K}p(\varphi_k|\beta)\,\prod_{d=1}^{D}p(\theta_d|\alpha)\,\prod_{n=1}^{N_d}p(z_{d,n}|\theta_d)\,p(w_{d,n}|\varphi_{z_{d,n}})$",
     r"$\mathrm{Perplexity}=2^{-\frac{1}{N}\sum_{d}\log_2 p(\mathbf{w}_d)}$",
     r"$\mathrm{JSD}(p,q)=\frac{1}{2}\mathrm{KL}(p\|m)+\frac{1}{2}\mathrm{KL}(q\|m),\quad m=\frac{1}{2}(p+q)$",
+    r"$\mathrm{NAP}(w)=\overline{\mathrm{sim}}_{\,\mathrm{intra}(w)}\;/\;\overline{\mathrm{sim}}_{\,\mathrm{global}}\;-\;1$",
 ]
 
 
@@ -283,12 +284,19 @@ def parse(md_lines, eq_imgs, flow_img):
             i = j + 1
             continue
 
-        # 展示公式
-        if s.startswith("$$") and s.endswith("$$") and len(s) > 4:
+        # 展示公式：支持单行 $$...$$ 与多行 $$\n...\n$$ 两种写法，
+        # 每个公式块按出现顺序消费一张预渲染的公式图（避免错位/漏图）。
+        if s.startswith("$$"):
+            if len(s) > 4 and s.endswith("$$"):       # 单行 $$formula$$
+                i += 1
+            else:                                      # 多行块：跳到下一行 $$
+                j = i + 1
+                while j < len(md_lines) and md_lines[j].strip() != "$$":
+                    j += 1
+                i = j + 1
             if eq_i < len(eq_imgs):
                 equation(eq_imgs[eq_i])
                 eq_i += 1
-            i += 1
             continue
 
         # 标题

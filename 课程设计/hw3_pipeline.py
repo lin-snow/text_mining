@@ -49,6 +49,10 @@ STOPWORDS_EXTRA = HW2 / "data" / "stopwords_extra.txt"
 CUSTOM_DICT = HW2 / "data" / "custom_dict_final.txt"          # 作业 2 产出的定制词典
 NEW_WORDS_CSV = HW2 / "data" / "new_words_evaluation.csv"      # 作业 2 挖出的新词
 STOPWORDS_TASK = DATA_DIR / "stopwords_task.txt"              # 本作业(主题建模)的任务级停用词
+# AIGC 增强与作业 3 联动（详见 llm_annotate.py / 作业3 NAP）
+NEWWORD_LLM = DATA_DIR / "newword_llm.json"                   # Claude 对新词的语义画像（缓存）
+NEWWORD_ANCHOR = DATA_DIR / "newword_anchoring.csv"           # 作业 3 的新词锚定力 NAP（已复制）
+NEWWORD_ABLATION = DATA_DIR / "newword_ablation.csv"          # 作业 3 的 NAP 消融实验（已复制）
 
 # --------------------------- 超参 ---------------------------
 K_RANGE = [4, 5, 6, 7, 8, 9, 10, 12]   # 候选主题数
@@ -330,6 +334,52 @@ def bridge_new_words(model, dictionary, k, labels) -> pd.DataFrame:
 
 
 # =========================================================
+# ⑧ 四方交叉验证（AIGC 增强 + 联动作业 3）
+#    把同一批新词的四种评估并到一张表：
+#      作业2 频率综合得分 hw2_score  |  作业3 推荐锚定力 NAP
+#      课设 LDA 主题集中度 topic_share  |  AIGC：Claude 语义画像(类别/真实体/隐喻/情感)
+# =========================================================
+def build_triangulation(bridge_df: pd.DataFrame) -> pd.DataFrame:
+    if bridge_df is None or bridge_df.empty or not NEWWORD_LLM.exists():
+        print("缺少 newword_llm.json 或新词归属，跳过四方交叉验证")
+        return pd.DataFrame()
+    llm = json.loads(NEWWORD_LLM.read_text(encoding="utf-8"))
+    ldf = pd.DataFrame(llm["items"])[
+        ["word", "category", "is_real_term", "is_metaphor", "sentiment",
+         "llm_domain", "lda_agree"]]
+    df = bridge_df.merge(ldf, on="word", how="left")
+    if NEWWORD_ANCHOR.exists():
+        nap = pd.read_csv(NEWWORD_ANCHOR)[["word", "NAP", "df", "intra_sim"]]
+        df = df.merge(nap, on="word", how="left")
+    df.to_csv(DATA_DIR / "newword_triangulation.csv", index=False, encoding="utf-8-sig")
+    return df
+
+
+def triangulation_stats(tri: pd.DataFrame) -> dict:
+    """量化结论：真实体 vs 通用词 在 LDA 集中度/NAP 上的差异，及跨方法相关性。"""
+    if tri is None or tri.empty:
+        return {}
+    real = tri[tri["is_real_term"] == True]            # noqa: E712
+    gen = tri[tri["is_real_term"] == False]            # noqa: E712
+    s = {
+        "n": len(tri),
+        "n_real": int(len(real)),
+        "n_generic": int(len(gen)),
+        "share_real": round(float(real["topic_share"].mean()), 3),
+        "share_generic": round(float(gen["topic_share"].mean()), 3),
+        "agree_rate": round(float(tri["lda_agree"].mean()), 3),
+    }
+    sub = tri.dropna(subset=["NAP", "hw2_score"])
+    if len(sub) > 3:
+        s["nap_real"] = round(float(real["NAP"].mean(skipna=True)), 3)
+        s["nap_generic"] = round(float(gen["NAP"].mean(skipna=True)), 3)
+        s["corr_nap_hw2"] = round(float(np.corrcoef(sub["NAP"], sub["hw2_score"])[0, 1]), 3)
+        s["corr_share_nap"] = round(float(np.corrcoef(
+            sub["topic_share"], sub["NAP"])[0, 1]), 3)
+    return s
+
+
+# =========================================================
 # 字体
 # =========================================================
 _FONT_CANDIDATES = [
@@ -602,6 +652,149 @@ def fig_newword_bridge(bridge_df, k, labels, out: Path):
     print("已保存 ->", out)
 
 
+def fig_llm_audit(tri: pd.DataFrame, stats: dict, out: Path):
+    """AIGC：Claude 对作业 2 新词的语义审计。
+    (a) LLM 类别分布；(b) 关键发现——LLM 判“真实体”的词，其 LDA 主题集中度显著
+        高于“通用词误召回”，即 LDA 的归属置信度反向印证了 LLM 的语义判断。"""
+    font = chinese_font()
+    plt.rcParams["axes.unicode_minus"] = False
+    if tri is None or tri.empty:
+        print("无交叉验证数据，跳过 LLM 审计图")
+        return
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13.5, 5.4),
+                                   gridspec_kw={"width_ratios": [1.15, 1]})
+
+    # (a) 类别分布
+    order = ["实体-模型", "实体-产品", "实体-公司", "实体-平台",
+             "技术术语", "通用词", "隐喻梗"]
+    cnt = tri["category"].value_counts()
+    cats = [c for c in order if c in cnt.index] + \
+           [c for c in cnt.index if c not in order]
+    vals = [int(cnt.get(c, 0)) for c in cats]
+    pal = {"实体-模型": "#2563eb", "实体-产品": "#0ea5e9", "实体-公司": "#6366f1",
+           "实体-平台": "#14b8a6", "技术术语": "#16a34a", "通用词": "#9ca3af",
+           "隐喻梗": "#f59e0b"}
+    colors = [pal.get(c, "#9ca3af") for c in cats]
+    y = range(len(cats))
+    ax1.barh(list(y), vals, color=colors)
+    ax1.set_yticks(list(y))
+    ax1.set_yticklabels(cats, fontproperties=font, fontsize=11)
+    ax1.invert_yaxis()
+    for i, v in enumerate(vals):
+        ax1.text(v + 0.3, i, str(v), va="center", fontproperties=font, fontsize=10)
+    n_real = stats.get("n_real", 0)
+    n_gen = stats.get("n_generic", 0)
+    ax1.set_xlabel("新词数", fontproperties=font, fontsize=11)
+    ax1.set_title(f"(a) Claude 对 {stats.get('n', 0)} 个新词的语义分类\n"
+                  f"真实体/术语 {n_real} 个，通用词误召回 {n_gen} 个",
+                  fontproperties=font, fontsize=12)
+    ax1.set_xlim(0, max(vals) + max(vals) * 0.18 + 1)
+
+    # (b) 真实体 vs 通用词 的 LDA 主题集中度
+    real_share = tri[tri["is_real_term"] == True]["topic_share"].dropna()      # noqa: E712
+    gen_share = tri[tri["is_real_term"] == False]["topic_share"].dropna()      # noqa: E712
+    data = [real_share.values, gen_share.values]
+    bp = ax2.boxplot(data, widths=0.55, patch_artist=True,
+                     medianprops=dict(color="#111827", lw=1.6),
+                     showmeans=True, meanprops=dict(marker="D", markerfacecolor="white",
+                                                    markeredgecolor="#111827", markersize=7))
+    for patch, c in zip(bp["boxes"], ["#16a34a", "#9ca3af"]):
+        patch.set_facecolor(c)
+        patch.set_alpha(0.55)
+    # 叠加抖动散点
+    for j, arr in enumerate(data, 1):
+        xj = np.random.RandomState(42).normal(j, 0.06, size=len(arr))
+        ax2.scatter(xj, arr, s=22, color=["#16a34a", "#9ca3af"][j - 1],
+                    edgecolors="white", linewidths=0.5, zorder=3, alpha=0.9)
+    ax2.set_xticks([1, 2])
+    ax2.set_xticklabels([f"LLM 判“真实体/术语”\n(n={len(real_share)}, 均值 {stats.get('share_real')})",
+                         f"LLM 判“通用词误召回”\n(n={len(gen_share)}, 均值 {stats.get('share_generic')})"],
+                        fontproperties=font, fontsize=10)
+    ax2.set_ylabel("LDA 主题集中度（主导主题归属度）", fontproperties=font, fontsize=11)
+    ax2.set_title("(b) LDA 归属置信度反向印证 LLM 的语义判断",
+                  fontproperties=font, fontsize=12)
+    ax2.grid(axis="y", ls=":", alpha=0.5)
+    fig.suptitle("AIGC 增强：用 Claude 作“语义裁判”审计作业 2 的自动新词",
+                 fontproperties=font, fontsize=14.5)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(out, dpi=160)
+    plt.close(fig)
+    print("已保存 ->", out)
+
+
+def fig_nap_triangulation(tri: pd.DataFrame, stats: dict, out: Path):
+    """联动作业 3：把 NAP 推荐锚定力并入新词评估，并展示四种方法互补不冗余。
+    (a) NAP 排行（按 LLM 真实体/通用词着色）；(b) 频率得分 vs NAP 散点（弱相关→互补）；
+    (c) 消融：移除最强锚点后含该词文档簇内相似度的下降。"""
+    font = chinese_font()
+    plt.rcParams["axes.unicode_minus"] = False
+    if tri is None or tri.empty or "NAP" not in tri.columns:
+        print("无 NAP 数据，跳过四方交叉验证图")
+        return
+    sub = tri.dropna(subset=["NAP"]).copy()
+    green, gray = "#16a34a", "#9ca3af"
+    sub["c"] = np.where(sub["is_real_term"] == True, green, gray)              # noqa: E712
+
+    fig = plt.figure(figsize=(16, 6.2))
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.15, 1.15, 0.9], wspace=0.34,
+                          left=0.06, right=0.985, bottom=0.12, top=0.80)
+    axa, axb, axc = (fig.add_subplot(gs[0, i]) for i in range(3))
+
+    # (a) NAP 排行 Top-16
+    top = sub.sort_values("NAP", ascending=False).head(16).iloc[::-1]
+    yy = range(len(top))
+    axa.barh(list(yy), top["NAP"], color=top["c"])
+    axa.set_yticks(list(yy))
+    axa.set_yticklabels(top["word"], fontproperties=font, fontsize=9.5)
+    for i, v in enumerate(top["NAP"]):
+        axa.text(v + 0.05, i, f"{v:.1f}", va="center", fontsize=8)
+    axa.set_xlabel("作业3 推荐锚定力 NAP", fontproperties=font, fontsize=10.5)
+    axa.set_title("(a) NAP 排行（绿=LLM真实体，灰=通用词）\n高 NAP 中混有“万亿/组织”等通用词",
+                  fontproperties=font, fontsize=11)
+    axa.set_xlim(0, top["NAP"].max() * 1.16)
+
+    # (b) 频率得分 vs NAP
+    axb.scatter(sub["hw2_score"], sub["NAP"], c=sub["c"], s=40,
+                edgecolors="white", linewidths=0.6, alpha=0.9)
+    for _, r in sub.sort_values("NAP", ascending=False).head(6).iterrows():
+        axb.annotate(str(r["word"]), (r["hw2_score"], r["NAP"]),
+                     fontproperties=font, fontsize=8.5,
+                     xytext=(4, 3), textcoords="offset points")
+    axb.set_xlabel("作业2 频率综合得分", fontproperties=font, fontsize=10.5)
+    axb.set_ylabel("作业3 NAP", fontproperties=font, fontsize=10.5)
+    corr = stats.get("corr_nap_hw2", float("nan"))
+    axb.set_title(f"(b) 频率 vs 锚定力：r={corr}（弱相关→互补）",
+                  fontproperties=font, fontsize=11)
+    axb.grid(ls=":", alpha=0.5)
+    from matplotlib.lines import Line2D
+    axb.legend(handles=[
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=green,
+               markersize=9, label="LLM 真实体/术语"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=gray,
+               markersize=9, label="LLM 通用词误召回"),
+    ], prop=font, fontsize=9, loc="upper left")
+
+    # (c) 消融
+    if NEWWORD_ABLATION.exists():
+        ab = pd.read_csv(NEWWORD_ABLATION).sort_values("drop_pct")
+        yy = range(len(ab))
+        axc.barh(list(yy), ab["drop_pct"], color="#dc2626", alpha=0.85)
+        axc.set_yticks(list(yy))
+        axc.set_yticklabels(ab["word"], fontproperties=font, fontsize=10)
+        for i, v in enumerate(ab["drop_pct"]):
+            axc.text(v + 0.3, i, f"-{v:.1f}%", va="center", fontproperties=font, fontsize=9)
+        axc.set_xlabel("移除该词后簇内相似度跌幅", fontproperties=font, fontsize=10.5)
+        axc.set_title("(c) 消融：最强锚点的局部贡献", fontproperties=font, fontsize=11)
+        axc.set_xlim(0, ab["drop_pct"].max() * 1.35)
+    else:
+        axc.axis("off")
+    fig.suptitle("四方交叉验证：频率（作业2）· 锚定力（作业3）· 主题集中度（课设）· LLM语义（AIGC）",
+                 fontproperties=font, fontsize=14.5, y=0.95)
+    fig.savefig(out, dpi=160)
+    plt.close(fig)
+    print("已保存 ->", out)
+
+
 def fig_topic_wordclouds(model, k, labels, out: Path):
     from wordcloud import WordCloud
     fp = font_path()
@@ -670,7 +863,17 @@ def main():
     feeds, src = export_tables(model, corpus, dictionary, docs, theta, best_k, labels, scan_df)
     bridge = bridge_new_words(model, dictionary, best_k, labels)
 
-    print("⑦ 出图 ...")
+    print("⑦ 四方交叉验证（AIGC 增强 + 联动作业 3）...")
+    tri = build_triangulation(bridge)
+    stats = triangulation_stats(tri)
+    if stats:
+        print(f"   新词={stats['n']}  真实体={stats['n_real']}  通用词={stats['n_generic']}")
+        print(f"   LDA主题集中度  真实体均值={stats['share_real']}  通用词均值={stats['share_generic']}")
+        if "corr_nap_hw2" in stats:
+            print(f"   相关性  NAP×频率={stats['corr_nap_hw2']}  主题集中度×NAP={stats['corr_share_nap']}")
+            print(f"   NAP 均值  真实体={stats['nap_real']}  通用词={stats['nap_generic']}")
+
+    print("⑧ 出图 ...")
     fig_scan(scan_df, best_k, FIGURES_DIR / "k_selection.png")
     fig_topic_terms(model, best_k, labels, FIGURES_DIR / "topic_terms.png")
     fig_topic_timeline(FIGURES_DIR / "topic_timeline.png", best_k, labels)
@@ -678,6 +881,8 @@ def main():
     fig_intertopic(model, theta, best_k, labels, FIGURES_DIR / "intertopic_map.png")
     fig_newword_bridge(bridge, best_k, labels, FIGURES_DIR / "newword_bridge.png")
     fig_topic_wordclouds(model, best_k, labels, FIGURES_DIR / "topic_wordclouds.png")
+    fig_llm_audit(tri, stats, FIGURES_DIR / "llm_newword_audit.png")
+    fig_nap_triangulation(tri, stats, FIGURES_DIR / "newword_triangulation.png")
 
     print("\n=== 完成 ===")
     print(f"主题数 K={best_k}；最佳 C_v={scan_df['coherence_cv'].max()}")
