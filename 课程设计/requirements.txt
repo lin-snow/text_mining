@@ -1,0 +1,7 @@
+gensim>=4.3
+jieba>=0.42
+numpy
+scipy
+pandas
+matplotlib
+wordcloud
